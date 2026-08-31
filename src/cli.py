@@ -1,4 +1,4 @@
-"""Rich Command-Line Interface (CLI) for Paper2Patent ADK Agent."""
+"""Rich Command-Line Interface (CLI) for Paper2Patent ADK Agent with HITL Support."""
 
 import sys
 import os
@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.markdown import Markdown
+from rich.prompt import Confirm, Prompt
 
 from src.agents.coordinator import Paper2PatentCoordinator
 
@@ -20,7 +20,7 @@ def print_banner():
         Panel(
             "[bold cyan]Paper2Patent ADK Multi-Agent System[/bold cyan]\n"
             "[dim]Autonomous Academic Research to USPTO Prior-Art & Patent Claims[/dim]\n"
-            "[green]Framework: Google ADK (Python) | Architecture: 4-Agent Pipeline[/green]",
+            "[green]Framework: Google ADK (Python) | Architecture: 4-Agent Pipeline | Model Routing: Flash/Pro[/green]",
             border_style="cyan",
         )
     )
@@ -34,6 +34,9 @@ def run_cli():
     )
     parser.add_argument(
         "--output", "-o", type=str, help="Optional output path to save the generated dossier markdown."
+    )
+    parser.add_argument(
+        "--hitl", action="store_true", help="Enable Human-in-the-Loop review gate before claim drafting."
     )
     args = parser.parse_args()
 
@@ -65,9 +68,46 @@ Our primary contribution is a context-dependent state matrix operator B(t) and C
         TextColumn("[bold blue]{task.description}"),
         console=console,
     ) as progress:
-        task = progress.add_task("Executing Google ADK Multi-Agent Orchestration...", total=None)
-        result = coordinator.run_pipeline(paper_text=paper_text)
+        task = progress.add_task("Executing Google ADK Multi-Agent Pipeline (Stages 1-2)...", total=None)
+        result = coordinator.run_pipeline(paper_text=paper_text, require_human_approval=args.hitl)
         progress.update(task, completed=True)
+
+    # If paused for HITL
+    if result.status == "PAUSED_FOR_HUMAN_APPROVAL":
+        console.print("\n[bold yellow]⚠️ Human-in-the-Loop Checkpoint: Prior Art Collision Review[/bold yellow]")
+        
+        # Display Collision Table
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Patent No.", style="cyan")
+        table.add_column("Title", style="white")
+        table.add_column("Collision Prob", justify="right")
+        table.add_column("Risk Level", justify="center")
+
+        for item in result.fto_report.get("collision_items", []):
+            risk_color = "red" if item["risk_level"] == "HIGH" else "yellow" if item["risk_level"] == "MODERATE" else "green"
+            table.add_row(
+                item["patent_number"],
+                item["patent_title"],
+                f"{item['collision_probability']*100:.1f}%",
+                f"[{risk_color}]{item['risk_level']}[/{risk_color}]",
+            )
+        console.print(table)
+
+        approved = Confirm.ask("Approve FTO Carveout Strategy to proceed to Stage 3 (Claim Drafting)?")
+        feedback = None
+        if approved:
+            add_feedback = Confirm.ask("Do you want to inject custom claim adjustment instructions?", default=False)
+            if add_feedback:
+                feedback = Prompt.ask("Enter custom patent attorney instruction")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Resuming Google ADK Multi-Agent Pipeline (Stages 3-4)...", total=None)
+            result = coordinator.resume_pipeline(session_id=result.session_id, human_approved=approved, human_feedback=feedback)
+            progress.update(task, completed=True)
 
     # 1. Summary Header
     console.print()
@@ -81,26 +121,13 @@ Our primary contribution is a context-dependent state matrix operator B(t) and C
         )
     )
 
-    # 2. Prior Art Collision Table
-    console.print("\n[bold cyan]1. Prior Art & Freedom-to-Operate Collision Analysis[/bold cyan]")
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Patent No.", style="cyan")
-    table.add_column("Title", style="white")
-    table.add_column("Collision Prob", justify="right")
-    table.add_column("Risk Level", justify="center")
-
-    for item in result.fto_report.get("collision_items", []):
-        risk_color = "red" if item["risk_level"] == "HIGH" else "yellow" if item["risk_level"] == "MODERATE" else "green"
-        table.add_row(
-            item["patent_number"],
-            item["patent_title"],
-            f"{item['collision_probability']*100:.1f}%",
-            f"[{risk_color}]{item['risk_level']}[/{risk_color}]",
-        )
-    console.print(table)
+    # 2. Strategic Model Routing
+    console.print("[bold cyan]Model Routing Manifest:[/bold cyan]")
+    for agent, model in result.model_routing.items():
+        console.print(f"  • [bold]{agent}[/bold] ➔ [green]{model}[/green]")
 
     # 3. Formatted Claims
-    console.print("\n[bold cyan]2. Generated USPTO Patent Claims[/bold cyan]")
+    console.print("\n[bold cyan]Generated USPTO Patent Claims:[/bold cyan]")
     for claim in result.drafted_claims.get("claims", []):
         console.print(
             Panel(

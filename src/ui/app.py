@@ -1,8 +1,9 @@
-"""Streamlit Web Dashboard for Paper2Patent Google ADK Agent."""
+"""Streamlit Web Dashboard for Paper2Patent Google ADK Agent with HITL & Model Routing."""
 
 import json
 import streamlit as st
 from src.agents.coordinator import Paper2PatentCoordinator
+from src.eval.benchmark import GoldenDatasetEvaluator
 from src.observability.tracer import global_tracer
 from src.observability.metrics import global_metrics
 
@@ -67,11 +68,17 @@ def main():
     # Sidebar
     st.sidebar.header("⚙️ Configuration")
     sample_choice = st.sidebar.selectbox("Load Sample Research Paper", list(SAMPLE_PAPERS.keys()))
+    enable_hitl = st.sidebar.checkbox("Enable Human-in-the-Loop (HITL) Gate", value=False)
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Agent Framework**: Google ADK (Python)")
-    st.sidebar.markdown("**Target Jurisdiction**: USPTO / 35 U.S.C.")
-    st.sidebar.markdown("**Evaluation Rubric**: 95/95 Aligned")
+    st.sidebar.markdown("**Strategic Model Routing**:")
+    st.sidebar.markdown("• Extraction: `gemini-2.0-flash`")
+    st.sidebar.markdown("• FTO Search: `gemini-2.0-flash`")
+    st.sidebar.markdown("• Claim Drafter: `gemini-2.5-pro`")
+    st.sidebar.markdown("• Statutory Auditor: `gemini-2.5-pro`")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Storage**: Persistent SQLite DB")
+    st.sidebar.markdown("**Observability**: OpenTelemetry SDK + PII Scrubber")
 
     # Paper Input
     paper_input = st.text_area(
@@ -80,19 +87,52 @@ def main():
         height=220,
     )
 
-    if st.button("🚀 Run Multi-Agent ADK Pipeline", type="primary", use_container_width=True):
-        coordinator = Paper2PatentCoordinator()
-        
-        with st.spinner("Executing Google ADK Multi-Agent Orchestration (Analyzer ➔ Examiner ➔ Drafter ➔ Auditor)..."):
-            result = coordinator.run_pipeline(paper_text=paper_input)
-            st.session_state["pipeline_result"] = result
+    coordinator = Paper2PatentCoordinator()
+
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        if st.button("🚀 Run Multi-Agent ADK Pipeline", type="primary", use_container_width=True):
+            with st.spinner("Executing Google ADK Multi-Agent Orchestration..."):
+                result = coordinator.run_pipeline(paper_text=paper_input, require_human_approval=enable_hitl)
+                st.session_state["pipeline_result"] = result
+
+    with col_btn2:
+        if st.button("🧪 Run Golden Benchmark", use_container_width=True):
+            with st.spinner("Evaluating regression benchmark across Golden Dataset..."):
+                evaluator = GoldenDatasetEvaluator()
+                st.session_state["benchmark_summary"] = evaluator.run_benchmark()
+
+    # Benchmark display if available
+    if "benchmark_summary" in st.session_state:
+        b = st.session_state["benchmark_summary"]
+        st.success(f"🎯 Golden Dataset Benchmark Completed: {b.passed_cases}/{b.total_test_cases} Cases Passed ({b.overall_pass_rate*100:.1f}%)")
+        bcol1, bcol2, bcol3, bcol4 = st.columns(4)
+        with bcol1:
+            st.metric("Domain Accuracy", f"{b.domain_classification_accuracy*100:.0f}%")
+        with bcol2:
+            st.metric("Claim Compliance", f"{b.claim_count_compliance_rate*100:.0f}%")
+        with bcol3:
+            st.metric("FTO Range Match", f"{b.fto_range_compliance_rate*100:.0f}%")
+        with bcol4:
+            st.metric("Statutory Match", f"{b.statutory_verdict_match_rate*100:.0f}%")
 
     # Display Results if available
     if "pipeline_result" in st.session_state:
         res = st.session_state["pipeline_result"]
 
         st.markdown("---")
-        # Executive Scoreboard
+
+        if res.status == "PAUSED_FOR_HUMAN_APPROVAL":
+            st.warning("⚠️ **Human-in-the-Loop Checkpoint**: Pipeline paused after Stage 2. Please review FTO Collision Matrix below before proceeding to Claim Drafting.")
+            feedback = st.text_input("Optional Attorney Feedback / Claim Limitation:", placeholder="e.g. Limit claim 1 to continuous-time recurrence operators")
+            
+            if st.button("✅ Approve Carveouts & Synthesize USPTO Claims", type="primary"):
+                with st.spinner("Resuming Pipeline with Pro-Tier Reasoning..."):
+                    res = coordinator.resume_pipeline(session_id=res.session_id, human_approved=True, human_feedback=feedback)
+                    st.session_state["pipeline_result"] = res
+                    st.rerun()
+
+        # Scoreboard
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Technical Domain", res.domain)
@@ -103,7 +143,7 @@ def main():
         with col4:
             st.metric("Audit Verdict", res.verdict)
 
-        # Tabs for 5 Pillars
+        # Tabs
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔬 1. Novelty & Extraction",
             "🔍 2. Prior Art & FTO Collision",
@@ -140,19 +180,22 @@ def main():
 
         with tab3:
             st.subheader("USPTO Provisional Patent Claims")
-            st.caption("Drafted strictly adhering to 35 U.S.C. 112 MPEP claim formatting rules.")
+            st.caption("Drafted strictly adhering to 35 U.S.C. 112 MPEP claim formatting rules via Gemini 2.5 Pro.")
             
-            for claim in res.drafted_claims.get("claims", []):
-                with st.container():
-                    st.markdown(f"**Claim {claim['claim_number']} ({claim['claim_type']})**")
-                    st.code(claim["full_claim_text"], language="text")
+            if res.drafted_claims.get("claims"):
+                for claim in res.drafted_claims.get("claims", []):
+                    with st.container():
+                        st.markdown(f"**Claim {claim['claim_number']} ({claim['claim_type']})**")
+                        st.code(claim["full_claim_text"], language="text")
 
-            st.download_button(
-                label="📥 Download Full Patent Readiness Dossier (.md)",
-                data=res.formatted_dossier,
-                file_name=f"patent_dossier_{res.trace_id}.md",
-                mime="text/markdown",
-            )
+                st.download_button(
+                    label="📥 Download Full Patent Readiness Dossier (.md)",
+                    data=res.formatted_dossier,
+                    file_name=f"patent_dossier_{res.trace_id}.md",
+                    mime="text/markdown",
+                )
+            else:
+                st.info("Claims will appear once Stage 2 is approved.")
 
         with tab4:
             st.subheader("OpenTelemetry & Google ADK Agent Tracing")
@@ -166,10 +209,13 @@ def main():
             with mcol3:
                 st.metric("Executed Agent Steps", res.metrics.steps_count)
 
+            st.markdown("#### Strategic Model Routing Table:")
+            st.json(res.model_routing)
+
             st.markdown("#### Agent Latency Breakdown:")
             st.json(res.metrics.agent_breakdown)
 
-            st.markdown("#### Full Trace Spans:")
+            st.markdown("#### Full OpenTelemetry Spans (PII Scrubbed):")
             spans = global_tracer.get_traces_for_id(res.trace_id)
             st.json([s.model_dump() for s in spans])
 

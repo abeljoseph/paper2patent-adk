@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: Lint & Pytest Suite
+    name: Lint, Golden Dataset Regression & Pytest Suite
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -32,19 +32,33 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          # stop the build if there are Python syntax errors or undefined names
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,build,dist
-          # exit-zero treats all errors as warnings.
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics --exclude=.venv,venv,build,dist
 
-      - name: Run Pytest Suite with Coverage
+      - name: Run Pytest Suite & Golden Dataset Regressions with Coverage
         run: |
           export PYTHONPATH=.
           pytest --cov=src --cov-report=term-missing tests/
 
+  terraform:
+    name: Validate Terraform IaC
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Format Check
+        run: |
+          terraform -chdir=terraform fmt -check
+          terraform -chdir=terraform init -backend=false
+          terraform -chdir=terraform validate
+
   docker:
     name: Build & Verify Docker Image
-    needs: test
+    needs: [test, terraform]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

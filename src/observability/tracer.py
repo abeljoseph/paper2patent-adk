@@ -1,4 +1,4 @@
-"""Agent Tracing and OpenTelemetry instrumentation for Google ADK workflows."""
+"""Agent Tracing utilizing official OpenTelemetry SDK and active PII scrubbing."""
 
 import json
 import logging
@@ -7,12 +7,40 @@ import time
 import uuid
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 from pydantic import BaseModel, Field
+
+# OpenTelemetry SDK imports
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider, ReadableSpan
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.resources import Resource
+
+from src.observability.pii_scrubber import PIIScrubber
 
 # Setup logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Paper2Patent.Tracer")
+
+
+class InMemorySpanExporter(SpanExporter):
+    """In-memory exporter for OpenTelemetry spans."""
+
+    def __init__(self):
+        self._spans: List[ReadableSpan] = []
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        self._spans.extend(spans)
+        return SpanExportResult.SUCCESS
+
+    def get_finished_spans(self) -> List[ReadableSpan]:
+        return list(self._spans)
+
+    def clear(self):
+        self._spans.clear()
+
+    def shutdown(self):
+        self.clear()
 
 
 class AgentTraceSpan(BaseModel):
@@ -27,7 +55,7 @@ class AgentTraceSpan(BaseModel):
     start_time: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     end_time: Optional[str] = None
     duration_ms: float = 0.0
-    status: str = "RUNNING"  # RUNNING, SUCCESS, ERROR
+    status: str = "RUNNING"  # RUNNING, SUCCESS, ERROR, RECOVERED
     inputs: Dict[str, Any] = Field(default_factory=dict)
     outputs: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -36,30 +64,40 @@ class AgentTraceSpan(BaseModel):
     error_message: Optional[str] = None
 
     def finish(self, status: str = "SUCCESS", outputs: Optional[Dict[str, Any]] = None, error: Optional[str] = None):
-        """Mark span as finished and calculate duration."""
+        """Mark span as finished, scrub data, and calculate duration."""
         self.end_time = datetime.now(timezone.utc).isoformat()
         self.status = status
         if outputs:
-            self.outputs = outputs
+            self.outputs = PIIScrubber.scrub_data(outputs)
         if error:
-            self.error_message = error
+            self.error_message = PIIScrubber.scrub_text(error)
         
-        # Calculate approximate duration
+        # Calculate duration
         start_dt = datetime.fromisoformat(self.start_time)
         end_dt = datetime.fromisoformat(self.end_time)
         self.duration_ms = round((end_dt - start_dt).total_seconds() * 1000, 2)
 
 
 class AgentTracer:
-    """Central Tracer recording agent lifecycle, tool invocations, and telemetry."""
+    """Central Tracer backed by official OpenTelemetry SDK and JSON Lines persistence."""
 
     def __init__(self, log_path: str = "logs/traces.jsonl"):
         self.log_path = log_path
         self.spans: List[AgentTraceSpan] = []
         self._ensure_log_dir()
+        self._init_opentelemetry()
 
     def _ensure_log_dir(self):
         os.makedirs(os.path.dirname(self.log_path) if os.path.dirname(self.log_path) else ".", exist_ok=True)
+
+    def _init_opentelemetry(self):
+        """Initialize OpenTelemetry SDK TracerProvider and In-Memory exporter."""
+        resource = Resource.create(attributes={"service.name": "paper2patent-adk-agent"})
+        self.otel_provider = TracerProvider(resource=resource)
+        self.otel_exporter = InMemorySpanExporter()
+        self.otel_provider.add_span_processor(SimpleSpanProcessor(self.otel_exporter))
+        trace.set_tracer_provider(self.otel_provider)
+        self.otel_tracer = trace.get_tracer("paper2patent.adk")
 
     def start_span(
         self,
@@ -70,16 +108,24 @@ class AgentTracer:
         inputs: Optional[Dict[str, Any]] = None,
         parent_span_id: Optional[str] = None,
     ) -> AgentTraceSpan:
-        """Start a new trace span."""
+        """Start a new trace span with active PII scrubbing."""
+        cleaned_inputs = PIIScrubber.scrub_data(inputs or {})
         span = AgentTraceSpan(
             trace_id=trace_id,
             step_name=step_name,
             agent_name=agent_name,
             component_type=component_type,
-            inputs=inputs or {},
+            inputs=cleaned_inputs,
             parent_span_id=parent_span_id,
         )
         self.spans.append(span)
+
+        # Also emit to OpenTelemetry SDK tracer
+        with self.otel_tracer.start_as_current_span(f"{agent_name}.{step_name}") as otel_span:
+            otel_span.set_attribute("agent.name", agent_name)
+            otel_span.set_attribute("agent.component", component_type)
+            otel_span.set_attribute("trace.id", trace_id)
+
         logger.info(f"[{trace_id}] STARTED: {agent_name} -> {step_name}")
         return span
 
@@ -92,7 +138,7 @@ class AgentTracer:
         tokens_out: int = 0,
         error: Optional[str] = None,
     ):
-        """End and persist span."""
+        """End, scrub, and persist span."""
         span.tokens_in = tokens_in
         span.tokens_out = tokens_out
         span.finish(status=status, outputs=outputs, error=error)
@@ -116,6 +162,7 @@ class AgentTracer:
     def clear(self):
         """Clear memory trace list."""
         self.spans.clear()
+        self.otel_exporter.clear()
 
 
 # Global tracer singleton
@@ -128,16 +175,15 @@ def trace_agent_step(agent_name: str, step_name: Optional[str] = None, component
         @wraps(func)
         def wrapper(*args, **kwargs):
             actual_step_name = step_name or func.__name__
-            # Extract trace_id from kwargs, args, or self
             trace_id = kwargs.get("trace_id")
             if not trace_id and args and hasattr(args[0], "trace_id"):
                 trace_id = getattr(args[0], "trace_id")
             if not trace_id:
                 trace_id = str(uuid.uuid4())[:8]
 
-            safe_inputs = {
-                k: str(v)[:200] for k, v in kwargs.items() if k not in ["api_key", "password"]
-            }
+            safe_inputs = PIIScrubber.scrub_data({
+                k: str(v)[:200] for k, v in kwargs.items()
+            })
             span = global_tracer.start_span(
                 trace_id=trace_id,
                 step_name=actual_step_name,
@@ -148,8 +194,7 @@ def trace_agent_step(agent_name: str, step_name: Optional[str] = None, component
             
             try:
                 result = func(*args, **kwargs)
-                safe_output = {"summary": str(result)[:300]}
-                # Calculate synthetic tokens if mock
+                safe_output = PIIScrubber.scrub_data({"summary": str(result)[:300]})
                 tok_in = len(str(safe_inputs)) // 4
                 tok_out = len(str(result)) // 4
                 global_tracer.end_span(

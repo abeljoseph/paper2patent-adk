@@ -28,6 +28,9 @@ def test_coordinator_end_to_end_quantum(coordinator, sample_quantum_paper):
     assert result.metrics.total_duration_ms >= 0
 
 
-def test_coordinator_invalid_text(coordinator):
-    with pytest.raises(ValueError, match="Paper analysis failed"):
-        coordinator.run_pipeline(paper_text="too short")
+def test_coordinator_guided_recovery_on_short_text(coordinator):
+    # Tests that short text is recovered gracefully via guided fallback rather than crashing
+    result = coordinator.run_pipeline(paper_text="too short")
+    assert result.status == "COMPLETED"
+    assert result.total_claims_drafted >= 3
+    assert "extraction_notes" in str(result.extracted_disclosure)

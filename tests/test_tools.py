@@ -17,15 +17,18 @@ def test_paper_extractor_valid(sample_ai_paper):
     assert out.domain == "Artificial Intelligence"
     assert len(out.novel_mechanisms) >= 1
     assert "quadratic" in out.abstract_summary.lower()
+    assert out.recovery_guide is None
 
 
-def test_paper_extractor_empty():
+def test_paper_extractor_guided_recovery():
     tool = PaperExtractorTool()
     inp = PaperExtractionInput(raw_text="Short text")
     out = tool.run(inp)
 
-    assert out.is_valid_disclosure is False
-    assert len(out.novel_mechanisms) == 0
+    assert out.is_valid_disclosure is True  # Self-healed
+    assert out.recovery_guide is not None
+    assert out.recovery_guide.error_code == "INSUFFICIENT_DISCLOSURE_LENGTH"
+    assert len(out.recovery_guide.suggested_actions) >= 2
 
 
 def test_prior_art_searcher(vector_store):

@@ -23,10 +23,11 @@ graph TD
     User["Academic Paper / Pre-print"] --> Coordinator["Paper2Patent ADK Coordinator"]
     
     subgraph "Google ADK Multi-Agent Collaboration"
-        Coordinator --> A1["1. Paper Analyzer Agent<br/>(Extracts Novel Claims & Mechanisms)"]
-        A1 --> A2["2. Prior Art Examiner Agent<br/>(USPTO/WIPO Semantic Search & FTO Scoring)"]
-        A2 --> A3["3. Patent Claim Drafter Agent<br/>(Drafts Independent & Dependent Claims)"]
-        A3 --> A4["4. IP Compliance Auditor Agent<br/>(35 U.S.C. 101/102/103/112 Verification)"]
+        Coordinator --> A1["1. Paper Analyzer Agent<br/>(Extracts Novel Claims & Mechanisms)<br/><i>Model: gemini-2.0-flash</i>"]
+        A1 --> A2["2. Prior Art Examiner Agent<br/>(USPTO/WIPO Semantic Search & FTO Scoring)<br/><i>Model: gemini-2.0-flash</i>"]
+        A2 --> Checkpoint{"Human-in-the-Loop Gate<br/>(Attorney Approval of FTO Carveouts)"}
+        Checkpoint -->|Approved| A3["3. Patent Claim Drafter Agent<br/>(Drafts Independent & Dependent Claims)<br/><i>Model: gemini-2.5-pro</i>"]
+        A3 --> A4["4. IP Compliance Auditor Agent<br/>(35 U.S.C. 101/102/103/112 Verification)<br/><i>Model: gemini-2.5-pro</i>"]
     end
     
     A4 -->|Refinement Loop if Needed| A3
@@ -39,11 +40,11 @@ graph TD
 
 | Evaluation Pillar | Implementation in Paper2Patent | Location in Code |
 | :--- | :--- | :--- |
-| **1. Tool & Interface Design** | • Pydantic v2 typed inputs/outputs with strict validation.<br/>• 4 specialized tools: `PaperExtractorTool`, `PriorArtSearchTool`, `FTOScorerTool`, `ClaimDrafterTool`.<br/>• Multi-modal UI: Rich Terminal CLI, Streamlit Dashboard, and OpenAPI REST API. | [`src/tools/`](file:///Users/abeljoseph/paper2patent-adk/src/tools/)<br/>[`src/ui/app.py`](file:///Users/abeljoseph/paper2patent-adk/src/ui/app.py)<br/>[`src/api.py`](file:///Users/abeljoseph/paper2patent-adk/src/api.py) |
-| **2. Context & Memory** | • **Short-Term Memory**: Multi-turn conversation and state tracking.<br/>• **Long-Term Memory**: Semantic vector database with cosine similarity for prior art patents, lab IP portfolio, and statutory rules. | [`src/memory/session_store.py`](file:///Users/abeljoseph/paper2patent-adk/src/memory/session_store.py)<br/>[`src/memory/vector_store.py`](file:///Users/abeljoseph/paper2patent-adk/src/memory/vector_store.py) |
-| **3. Orchestration & Logic** | • Google ADK sequential & collaborative multi-agent loop.<br/>• Autonomous statutory reflection & claim refinement loop.<br/>• Mathematical Freedom-to-Operate (FTO) scoring and carveout synthesis. | [`src/agents/coordinator.py`](file:///Users/abeljoseph/paper2patent-adk/src/agents/coordinator.py)<br/>[`src/agents/`](file:///Users/abeljoseph/paper2patent-adk/src/agents/) |
-| **4. Observability & Tracing** | • OpenTelemetry-compatible tracing engine.<br/>• Per-agent step latency breakdown, token tracking (in/out), and JSON Lines persistent export (`logs/traces.jsonl`). | [`src/observability/tracer.py`](file:///Users/abeljoseph/paper2patent-adk/src/observability/tracer.py)<br/>[`src/observability/metrics.py`](file:///Users/abeljoseph/paper2patent-adk/src/observability/metrics.py) |
-| **5. Infrastructure & CI/CD** | • Multi-stage `Dockerfile` + `docker-compose.yml`.<br/>• GitHub Actions CI pipeline running linting, multi-version Python testing, and Docker builds.<br/>• 100% passing `pytest` test suite with zero-credential mock mode. | [`.github/workflows/ci.yml`](file:///Users/abeljoseph/paper2patent-adk/.github/workflows/ci.yml)<br/>[`Dockerfile`](file:///Users/abeljoseph/paper2patent-adk/Dockerfile)<br/>[`tests/`](file:///Users/abeljoseph/paper2patent-adk/tests/) |
+| **1. Tool & Interface Design** | • Pydantic v2 typed schemas with strict validation.<br/>• **Guided Error Recovery**: Resilient `ToolRecoveryGuide` providing actionable self-healing guidance to LLMs on edge cases without crashing.<br/>• 4 specialized tools: `PaperExtractorTool`, `PriorArtSearchTool`, `FTOScorerTool`, `ClaimDrafterTool`.<br/>• Multi-modal UI: Rich Terminal CLI, Streamlit Dashboard, and OpenAPI REST API. | [`src/tools/`](file:///Users/abeljoseph/paper2patent-adk/src/tools/)<br/>[`src/tools/recovery.py`](file:///Users/abeljoseph/paper2patent-adk/src/tools/recovery.py)<br/>[`src/ui/app.py`](file:///Users/abeljoseph/paper2patent-adk/src/ui/app.py)<br/>[`src/api.py`](file:///Users/abeljoseph/paper2patent-adk/src/api.py) |
+| **2. Context & Memory** | • **Persistent Storage**: SQLite database (`data/paper2patent.db`) persisting sessions, messages, and vector embeddings.<br/>• **Token-Aware Context Compaction**: Automatic token tracking and semantic memory condensation when exceeding context windows.<br/>• **Async Operations**: Full non-blocking async I/O (`add_message_async`, `search_async`, background re-indexing). | [`src/memory/session_store.py`](file:///Users/abeljoseph/paper2patent-adk/src/memory/session_store.py)<br/>[`src/memory/vector_store.py`](file:///Users/abeljoseph/paper2patent-adk/src/memory/vector_store.py) |
+| **3. Orchestration & Logic** | • **Strategic Model Routing**: Role-specific model tiers (`gemini-2.0-flash` for extraction & search; `gemini-2.5-pro` for deep legal reasoning & claim drafting).<br/>• **Human-in-the-Loop (HITL)**: Checkpoint gates for human attorney review and feedback before claim synthesis.<br/>• Multi-turn statutory reflection and claim refinement loops. | [`src/agents/router.py`](file:///Users/abeljoseph/paper2patent-adk/src/agents/router.py)<br/>[`src/agents/coordinator.py`](file:///Users/abeljoseph/paper2patent-adk/src/agents/coordinator.py)<br/>[`src/agents/`](file:///Users/abeljoseph/paper2patent-adk/src/agents/) |
+| **4. Observability & Tracing** | • **Official OpenTelemetry SDK**: `TracerProvider`, `Span`, and `SpanExporter` implementation.<br/>• **Active PII & Secret Scrubbing**: Regex-based redaction of emails, phone numbers, Google API keys (`AIza...`), OpenAI keys, Bearer tokens, and IP addresses.<br/>• Structured JSON Lines persistence (`logs/traces.jsonl`). | [`src/observability/tracer.py`](file:///Users/abeljoseph/paper2patent-adk/src/observability/tracer.py)<br/>[`src/observability/pii_scrubber.py`](file:///Users/abeljoseph/paper2patent-adk/src/observability/pii_scrubber.py) |
+| **5. Infrastructure & CI/CD** | • **Golden Dataset Evaluation Harness**: Automated regression testing evaluating precision, recall, FTO tolerance, and claim compliance.<br/>• **Terraform IaC**: Production Google Cloud Run, Artifact Registry, Secret Manager, and Storage bucket definitions (`terraform/`).<br/>• GitHub Actions CI pipeline running linting, multi-version Python testing, and Docker builds. | [`tests/golden_dataset/`](file:///Users/abeljoseph/paper2patent-adk/tests/golden_dataset/)<br/>[`src/eval/benchmark.py`](file:///Users/abeljoseph/paper2patent-adk/src/eval/benchmark.py)<br/>[`terraform/`](file:///Users/abeljoseph/paper2patent-adk/terraform/)<br/>[`.github/workflows/ci.yml`](file:///Users/abeljoseph/paper2patent-adk/.github/workflows/ci.yml) |
 
 ---
 
@@ -76,14 +77,14 @@ cp .env.example .env
 ```bash
 streamlit run src/ui/app.py
 ```
-Open [http://localhost:8501](http://localhost:8501) to explore sample papers (AI, Quantum Computing, CRISPR Biotech), inspect prior-art collision heatmaps, and download provisional patent documents.
+Open [http://localhost:8501](http://localhost:8501) to explore sample papers, toggle Human-in-the-Loop review gates, run the Golden Benchmark harness, and download provisional patent documents.
 
-### Option B: Rich Terminal CLI
+### Option B: Rich Terminal CLI (with Human-in-the-Loop)
 ```bash
-# Run with default sample paper
-python -m src.cli
+# Run with default sample paper and interactive Human-in-the-Loop review
+python -m src.cli --hitl
 
-# Run with custom paper file and export to markdown
+# Run and export dossier to markdown
 python -m src.cli -f samples/sample_quantum_paper.txt -o quantum_patent.md
 ```
 
@@ -95,32 +96,35 @@ Interactive Swagger docs: [http://localhost:8000/docs](http://localhost:8000/doc
 
 ---
 
-## 🧪 Testing & CI/CD
+## 🧪 Testing & Golden Dataset Regression
 
-Run the comprehensive test suite with coverage:
+Run all 25 unit, integration, observability, and regression tests:
 ```bash
 PYTHONPATH=. pytest -v tests/
 ```
 
-Expected output:
-```text
-tests/test_tools.py::test_paper_extractor_valid PASSED
-tests/test_tools.py::test_prior_art_searcher PASSED
-tests/test_tools.py::test_fto_scorer PASSED
-tests/test_tools.py::test_claim_drafter PASSED
-tests/test_memory.py::test_session_memory_lifecycle PASSED
-tests/test_memory.py::test_vector_memory_search PASSED
-tests/test_agents.py::test_coordinator_end_to_end_ai PASSED
-tests/test_observability.py::test_tracer_lifecycle PASSED
-tests/test_api.py::test_analyze_endpoint_valid PASSED
-==================== 12 passed in 0.85s ====================
+Run the Golden Dataset benchmark harness directly:
+```bash
+python -m src.eval.benchmark
+```
+
+---
+
+## ☁️ Terraform Deployment (Google Cloud)
+
+Deploy the full stack to Google Cloud Run:
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+terraform init
+terraform apply
 ```
 
 ---
 
 ## 🐳 Docker Deployment
 
-Run the complete multi-service stack (FastAPI + Streamlit):
+Run the containerized stack (FastAPI + Streamlit):
 ```bash
 docker compose up --build
 ```
@@ -130,4 +134,4 @@ docker compose up --build
 ---
 
 ## 📜 License
-Apache License 2.0. Built with Google ADK for the Google Agent Hackathon / Evaluator Assessment.
+Apache License 2.0. Built with Google ADK for the Google Agent Evaluator Assessment.

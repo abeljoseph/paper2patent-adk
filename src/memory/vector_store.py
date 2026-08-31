@@ -1,6 +1,10 @@
-"""Long-term semantic vector memory for Prior Art, Lab IP, and Patent Statues."""
+"""Persistent, SQLite-backed Long-Term Semantic Vector Memory with Async Operations."""
 
+import os
+import json
+import sqlite3
 import hashlib
+import asyncio
 import numpy as np
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -15,12 +19,48 @@ class DocumentRecord(BaseModel):
 
 
 class VectorMemoryStore:
-    """In-memory Vector Database supporting semantic search over Patent prior art."""
+    """Persistent SQLite-backed Vector Database supporting semantic search and async task indexing."""
 
-    def __init__(self, embedding_dim: int = 256):
+    def __init__(self, db_path: str = "data/paper2patent.db", embedding_dim: int = 256):
+        self.db_path = db_path
         self.embedding_dim = embedding_dim
         self.documents: Dict[str, DocumentRecord] = {}
-        self._seed_default_knowledge_base()
+        self._ensure_db()
+        self._load_from_db()
+        if not self.documents:
+            self._seed_default_knowledge_base()
+
+    def _ensure_db(self):
+        """Initialize SQLite vector store tables."""
+        os.makedirs(os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".", exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS vector_records (
+                    id TEXT PRIMARY KEY,
+                    text TEXT,
+                    metadata_json TEXT,
+                    embedding_json TEXT
+                )
+                """
+            )
+            conn.commit()
+
+    def _load_from_db(self):
+        """Load persistent records from SQLite into memory cache."""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, text, metadata_json, embedding_json FROM vector_records")
+            rows = cur.fetchall()
+            for doc_id, text, meta_json, emb_json in rows:
+                meta = json.loads(meta_json) if meta_json else {}
+                emb = json.loads(emb_json) if emb_json else None
+                self.documents[doc_id] = DocumentRecord(
+                    id=doc_id,
+                    text=text,
+                    metadata=meta,
+                    embedding=emb,
+                )
 
     def _generate_embedding(self, text: str) -> List[float]:
         """Generate deterministic semantic embedding vector normalized to unit length."""
@@ -32,7 +72,6 @@ class VectorMemoryStore:
             return vec.tolist()
 
         for word in words:
-            # Deterministic SHA256 hashing
             h_bytes = hashlib.sha256(word.encode("utf-8")).digest()
             idx1 = int.from_bytes(h_bytes[:4], "big") % self.embedding_dim
             idx2 = int.from_bytes(h_bytes[4:8], "big") % self.embedding_dim
@@ -43,21 +82,19 @@ class VectorMemoryStore:
             vec[idx2] += 1.0 * weight
             vec[idx3] += 0.5 * weight
 
-            # Character 3-grams for fuzzy sub-word matching
             if len(word) >= 3:
                 for i in range(len(word) - 2):
                     ngram = word[i : i + 3]
                     ng_idx = int.from_bytes(hashlib.md5(ngram.encode("utf-8")).digest()[:4], "big") % self.embedding_dim
                     vec[ng_idx] += 0.3
 
-        # Normalize to unit vector
         norm = np.linalg.norm(vec)
         if norm > 0:
             vec = vec / norm
         return vec.tolist()
 
     def add_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> DocumentRecord:
-        """Add a document to vector memory with embedding."""
+        """Add a document to vector memory and persist to SQLite database."""
         embedding = self._generate_embedding(text)
         record = DocumentRecord(
             id=doc_id,
@@ -66,10 +103,26 @@ class VectorMemoryStore:
             embedding=embedding,
         )
         self.documents[doc_id] = record
+
+        # Persist to SQLite
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO vector_records (id, text, metadata_json, embedding_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (doc_id, text, json.dumps(metadata or {}), json.dumps(embedding)),
+            )
+            conn.commit()
+
         return record
 
+    async def add_document_async(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> DocumentRecord:
+        """Asynchronous non-blocking document addition."""
+        return await asyncio.to_thread(self.add_document, doc_id, text, metadata)
+
     def search(self, query: str, top_k: int = 5, filter_domain: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Search vector store by cosine similarity."""
+        """Search vector store by cosine similarity with keyword boosting."""
         query_vec = np.array(self._generate_embedding(query), dtype=np.float32)
         query_words = set(w.lower().strip(".,!?:;\"'()[]{}") for w in query.split() if len(w) > 2)
         results = []
@@ -81,12 +134,10 @@ class VectorMemoryStore:
             doc_vec = np.array(doc.embedding, dtype=np.float32)
             cosine_sim = float(np.dot(query_vec, doc_vec))
             
-            # Keyword overlap bonus
             doc_words = set(w.lower().strip(".,!?:;\"'()[]{}") for w in doc.text.split() if len(w) > 2)
             common = len(query_words.intersection(doc_words))
             keyword_bonus = min(0.35, common * 0.1)
 
-            # Combined similarity score
             sim_score = max(0.0, min(1.0, ((cosine_sim + 1.0) / 2.0) * 0.7 + keyword_bonus))
             
             results.append({
@@ -96,9 +147,22 @@ class VectorMemoryStore:
                 "similarity_score": round(sim_score, 4),
             })
 
-        # Sort descending by similarity
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results[:top_k]
+
+    async def search_async(self, query: str, top_k: int = 5, filter_domain: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Asynchronous non-blocking vector search."""
+        return await asyncio.to_thread(self.search, query, top_k, filter_domain)
+
+    async def background_batch_index(self, docs: List[Dict[str, Any]]):
+        """Asynchronous background task to re-index documents."""
+        for doc in docs:
+            await self.add_document_async(
+                doc_id=doc["id"],
+                text=doc["text"],
+                metadata=doc.get("metadata"),
+            )
+            await asyncio.sleep(0.01)
 
     def _seed_default_knowledge_base(self):
         """Seed representative patent prior art and statutory examination rules."""
@@ -158,7 +222,6 @@ class VectorMemoryStore:
                     "filing_year": 2020,
                 },
             },
-            # Statutory Patent Examination Rules
             {
                 "id": "35-USC-101",
                 "text": "Patentable subject matter requires a new and useful process, machine, manufacture, or composition of matter, excluding abstract mathematical algorithms unless tied to a technical application.",

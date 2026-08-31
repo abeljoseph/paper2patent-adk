@@ -1,10 +1,10 @@
-"""Base Agent framework compatible with Google ADK (Agent Development Kit)."""
+"""Base Agent framework compatible with Google ADK (Agent Development Kit) with Async & Model Routing."""
 
-import os
+import asyncio
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 from src.config import settings
-from src.observability.tracer import global_tracer
+from src.agents.router import ModelRouter
 
 
 class AgentContext(BaseModel):
@@ -14,19 +14,23 @@ class AgentContext(BaseModel):
     paper_raw: str
     state: Dict[str, Any] = Field(default_factory=dict)
     iteration: int = 1
+    requires_human_approval: bool = False
+    human_approved: bool = False
+    human_feedback: Optional[str] = None
 
 
 class AgentResponse(BaseModel):
     """Structured response from an ADK Agent."""
     agent_name: str
-    status: str  # SUCCESS, REFINEMENT_REQUIRED, ERROR
+    model_used: str = "gemini-2.0-flash"
+    status: str  # SUCCESS, REFINEMENT_REQUIRED, PAUSED_FOR_HUMAN_APPROVAL, ERROR
     content: str
     data: Dict[str, Any] = Field(default_factory=dict)
     tool_calls_made: List[str] = Field(default_factory=list)
 
 
 class BaseADKAgent:
-    """Base class for Google ADK Agent implementations."""
+    """Base class for Google ADK Agent implementations with strategic model routing."""
 
     def __init__(
         self,
@@ -38,7 +42,8 @@ class BaseADKAgent:
         self.name = name
         self.system_instruction = system_instruction
         self.tools = tools or []
-        self.model_name = model_name or settings.MODEL_NAME
+        # Strategic model routing
+        self.model_name = ModelRouter.get_model_for_agent(name, model_name)
         self._init_genai_client()
 
     def _init_genai_client(self):
@@ -49,9 +54,12 @@ class BaseADKAgent:
                 from google import genai
                 self.genai_client = genai.Client(api_key=settings.GEMINI_API_KEY)
             except Exception:
-                # If library or auth is not initialized, fallback seamlessly
                 self.genai_client = None
 
     def execute(self, context: AgentContext) -> AgentResponse:
-        """Core execution method to be overridden by specialized ADK agents."""
+        """Core synchronous execution method to be overridden by specialized ADK agents."""
         raise NotImplementedError("Subclasses must implement execute(context).")
+
+    async def execute_async(self, context: AgentContext) -> AgentResponse:
+        """Asynchronous execution handler."""
+        return await asyncio.to_thread(self.execute, context)

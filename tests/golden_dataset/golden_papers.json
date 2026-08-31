@@ -1,0 +1,38 @@
+[
+  {
+    "id": "gold-001-ai-state-space",
+    "paper_title": "Sub-Quadratic State-Space Memory Recurrence for Real-Time Sequence Processing",
+    "domain_expected": "Artificial Intelligence",
+    "min_claims_expected": 5,
+    "min_novel_mechanisms_expected": 1,
+    "expected_fto_min": 0.20,
+    "expected_fto_max": 0.95,
+    "expected_statutory_verdict": ["READY_FOR_PROVISIONAL_FILING", "REFINEMENT_RECOMMENDED"],
+    "required_claim_keywords": ["computing system", "processors", "memory", "sub-quadratic"],
+    "raw_text": "# Sub-Quadratic State-Space Memory Recurrence for Real-Time Sequence Processing\n\n## Abstract\nModern deep neural networks rely heavily on multi-head scaled dot-product attention, which exhibits quadratic O(N^2) memory and compute bottlenecks with sequence length. In this work, we propose 'Selective Structured Recurrence' (SSR), an adaptive continuous-time state-space operator that dynamically modulates gating matrices based on input context.\n\n## Novel Technical Mechanism\nOur primary contribution is a context-dependent state matrix operator B(t) and C(t) combined with a discrete associative scan algorithm. Unlike static convolution filters, the SSR engine filters irrelevant tokens with linear O(N) memory complexity and 3.2x throughput speedup over baseline Transformers on 128k context windows."
+  },
+  {
+    "id": "gold-002-quantum-cryo",
+    "paper_title": "Real-Time Cryogenic Pulse Modulation for Superconducting Qubit Error Mitigation",
+    "domain_expected": "Quantum Computing",
+    "min_claims_expected": 5,
+    "min_novel_mechanisms_expected": 1,
+    "expected_fto_min": 0.20,
+    "expected_fto_max": 0.95,
+    "expected_statutory_verdict": ["READY_FOR_PROVISIONAL_FILING", "REFINEMENT_RECOMMENDED"],
+    "required_claim_keywords": ["quantum", "processors", "method", "circuit"],
+    "raw_text": "# Real-Time Cryogenic Pulse Modulation for Superconducting Qubit Error Mitigation\n\n## Abstract\nQuantum processors suffer from phase decoherence and cross-talk during multi-qubit gate operations. We introduce a Cryogenic Pulse Modulation (CPM) controller operating at 20mK that dynamically corrects flux drift in transmon qubit arrays.\n\n## Novel Technical Mechanism\nThe invention comprises an on-chip Josephson arbitrary waveform generator coupled to an active feedback loop that suppresses thermal drift and reduces gate infidelity to below 0.05% per Clifford operation."
+  },
+  {
+    "id": "gold-003-biotech-crispr",
+    "paper_title": "Engineered Cas12a Ribonucleoprotein for Multiplexed Gene Activation",
+    "domain_expected": "Biotechnology",
+    "min_claims_expected": 5,
+    "min_novel_mechanisms_expected": 1,
+    "expected_fto_min": 0.20,
+    "expected_fto_max": 0.95,
+    "expected_statutory_verdict": ["READY_FOR_PROVISIONAL_FILING", "REFINEMENT_RECOMMENDED"],
+    "required_claim_keywords": ["system", "processors", "method"],
+    "raw_text": "# Engineered Cas12a Ribonucleoprotein for Multiplexed Gene Activation\n\n## Abstract\nTraditional CRISPR dCas9 transcriptional activators exhibit high off-target binding and large molecular footprint. We present an engineered Cas12a variant with a synthetic tripartite activation domain (VPR-mini).\n\n## Novel Technical Mechanism\nThe novel fusion complex recognizes an expanded 5'-TTTV-3' PAM motif with 4.5x higher transcriptional upregulation efficiency in human embryonic kidney cells while reducing non-specific genomic cuts to undetectable levels."
+  }
+]
