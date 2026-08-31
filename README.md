@@ -1,6 +1,6 @@
 # 📜 Paper2Patent: Google ADK Autonomous Prior-Art & Patent Claim Agent
 
-[![CI / CD Pipeline](https://github.com/your-org/paper2patent-adk/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/paper2patent-adk/actions/workflows/ci.yml)
+[![CI / CD Pipeline](https://github.com/abeljoseph/paper2patent-adk/actions/workflows/ci.yml/badge.svg)](https://github.com/abeljoseph/paper2patent-adk/actions/workflows/ci.yml)
 [![Framework: Google ADK](https://img.shields.io/badge/Framework-Google%20ADK-blue.svg)](https://google.github.io/adk-docs/)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
 [![Evaluation Score: 95/95](https://img.shields.io/badge/Evaluator%20Score-95%2F95%20Aligned-brightgreen.svg)]()
@@ -53,7 +53,7 @@ graph TD
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/paper2patent-adk.git
+git clone https://github.com/abeljoseph/paper2patent-adk.git
 cd paper2patent-adk
 
 # Install dependencies
