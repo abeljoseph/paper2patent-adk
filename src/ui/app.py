@@ -1,5 +1,11 @@
 """Streamlit Web Dashboard for Paper2Patent Google ADK Agent with HITL & Model Routing."""
 
+import sys
+import os
+
+# Ensure repo root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 import json
 import streamlit as st
 from src.agents.coordinator import Paper2PatentCoordinator

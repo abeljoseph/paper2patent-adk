@@ -42,3 +42,8 @@ htmlcov/
 logs/
 *.log
 *.jsonl
+
+# SQLite Databases
+*.db
+*.sqlite
+*.sqlite3

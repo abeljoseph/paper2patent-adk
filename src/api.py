@@ -1,5 +1,11 @@
 """FastAPI REST API Server for Paper2Patent ADK Multi-Agent Service with Async & HITL."""
 
+import sys
+import os
+
+# Ensure repo root is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
